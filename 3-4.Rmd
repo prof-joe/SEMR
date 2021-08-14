@@ -1,0 +1,329 @@
+# Chapter 4 Fused Lasso
+
+***************
+#### From Chapter 1
+```{r}
+soft.th = function(lambda, x) {
+  return(sign(x) * pmax(abs(x) - lambda, 0))
+}
+```
+***************
+
+## 4.1 Application of Fused Lasso
+
+### Example 35
+```{r}
+library(genlasso)
+df = read.table("cgh.txt"); y = df[[1]]; N = length(y)
+out = fusedlasso1d(y)
+plot(out, lambda = 0.1, xlab = "gene #", ylab = "Copy Number Variation",
+     main = "gene # 1-1000")
+```
+
+### Example 36
+```{r}
+library(genlasso)
+library(NipponMap)
+mat = read.table("adj.txt")
+mat = as.matrix(mat)            ## Adjacency matrix of 47 prefectures in Japan
+y = read.table("2020_6_9.txt")
+y = as.numeric(y[[1]])          ## #infected with corona for each of the 47 prefectures
+
+k = 0; u = NULL; v = NULL
+for (i in 1:46) for (j in (i + 1):47) if (mat[i, j] == 1) {
+  k = k + 1; u = c(u, i); v = c(v, j)
+}       
+m = length(u)
+D = matrix(0, m, 47)
+for (k in 1:m) {D[k, u[k]] = 1; D[k, v[k]] = -1}
+res = fusedlasso(y, D = D)
+z = coef(res, lambda = 50)$beta   # lambda = 150
+cc = round((10 - log(z)) * 2 - 1)      
+cols = NULL
+for (k in 1:47) cols = c(cols, heat.colors(12)[cc[k]])  ## Colors for each of 47 prefectures
+JapanPrefMap(col = cols, main = "lambda = 50")  ## a function to draw JP map
+```
+
+### 例37
+```{r}
+library(genlasso)
+n = 50; y = sin(1:n / n * 2 * pi) + rnorm(n)  ## Data Generation
+out = trendfilter(y, ord = 3); k = 1  # k = 2, 3, 4
+plot(out, lambda = k, main = paste("k = ", k))
+```
+
+## 4.2 Fused Lasso Solution via Dynamic Programing
+
+```{r}
+clean = function(z) {
+  m = length(z)
+  j = 2
+  while (z[1] >= z[j] && j < m)
+    j = j + 1
+  k = m - 1
+  while (z[m] <= z[k] && k > 1)
+    k = k - 1
+  if (j > k) {
+    return(z[c(1, m)])
+  } else {
+    return(z[c(1, j:k, m)])
+  }
+}
+
+fused = function(y, lambda = lambda) {
+  if (lambda == 0)
+    return(y)
+  n = length(y)
+  L = array(dim = n - 1)
+  U = array(dim = n - 1)
+  G = function(i, theta) {
+    if (i == 1) {
+      theta - y[1]
+    } else {
+      G(i - 1, theta) * (theta > L[i - 1] && theta < U[i - 1]) +
+        lambda * (theta >= U[i - 1]) - lambda * (theta <= L[i - 1]) +
+        theta - y[i]
+    }
+  }
+  theta = array(dim = n)
+  L[1] = y[1] - lambda
+  U[1] = y[1] + lambda
+  z = c(L[1], U[1])
+  if (n > 2) {
+    for (i in 2:(n - 1)) {
+      z = c(y[i] - 2 * lambda, z, y[i] + 2 * lambda)
+      z = clean(z)
+      m = length(z)
+      j = 1
+      while (G(i, z[j]) + lambda <= 0)
+        j = j + 1
+      if (j == 1) {
+        L[i] = z[m]
+        j = 2
+      } else {
+        L[i] = z[j - 1] - (z[j] - z[j - 1]) * (G(i, z[j - 1]) + lambda) /
+          (-G(i, z[j - 1]) + G(i, z[j]))
+      }
+      k = m
+      while (G(i, z[k]) - lambda >= 0)
+        k = k - 1
+      if (k == m) {
+        U[i] <- z[1]
+        k = m - 1
+      } else {
+        U[i] = z[k] - (z[k + 1] - z[k]) * (G(i, z[k]) - lambda) /
+          (-G(i, z[k]) + G(i, z[k + 1]))
+      }
+      z = c(L[i], z[j:k], U[i])
+    }
+  }
+  z = c(y[n] - lambda, z, y[n] + lambda)
+  z = clean(z)
+  m = length(z)
+  j = 1
+  while (G(n, z[j]) <= 0 && j < m)
+    j = j + 1
+  if (j == 1) {
+    theta[n] = z[1]
+  } else {
+    theta[n] = z[j - 1] - (z[j] - z[j - 1]) * G(n, z[j - 1]) /
+      (-G(n, z[j - 1]) + G(n, z[j]))
+  }
+  for (i in n:2) {
+    if (theta[i] < L[i - 1])
+      theta[i - 1] = L[i - 1]
+    if (L[i - 1] <= theta[i] && theta[i] <= U[i - 1])
+      theta[i - 1] = theta[i]
+    if (theta[i] > U[i - 1])
+      theta[i - 1] = U[i - 1]
+  }
+  return(theta)
+}
+```
+
+## 4.3 LARS
+
+```{r}
+lars = function(X, y) {
+  X = as.matrix(X); n = nrow(X); p = ncol(X); X.bar = array(dim = p)
+  for (j in 1:p) {X.bar[j] = mean(X[, j]); X[, j] = X[, j] - X.bar[j]}
+  y.bar = mean(y); y = y - y.bar
+  scale = array(dim = p)
+  for (j in 1:p) {scale[j] = sqrt(sum(X[, j] ^ 2) / n); X[, j] = X[, j] / scale[j]}
+  beta = matrix(0, p + 1, p); lambda = rep(0, p + 1)
+  for (i in 1:p) {
+    lam = abs(sum(X[, i] * y))
+    if (lam > lambda[1]) {i.max = i; lambda[1] = lam}
+  }
+  r = y; index = i.max; Delta = rep(0, p)
+  for (k in 2:p) {
+    Delta[index] = solve(t(X[, index]) %*% X[, index]) %*% 
+      t(X[, index]) %*% r / lambda[k - 1]
+    u = t(X[, -index]) %*% (r - lambda[k - 1] * X %*% Delta)
+    v = -t(X[, -index]) %*% (X %*% Delta)
+    t = u / (v + 1)
+    for (i in 1:(p - k + 1)) if (t[i] > lambda[k]) {lambda[k] = t[i]; i.max = i}
+    t = u / (v - 1)
+    for (i in 1:(p - k + 1)) if (t[i] > lambda[k]) {lambda[k] = t[i]; i.max = i}
+    j = setdiff(1:p, index)[i.max]
+    index = c(index, j)
+    beta[k, ] = beta[k - 1, ] + (lambda[k - 1] - lambda[k]) * Delta
+    r = y - X %*% beta[k, ]
+  }
+  for (k in 1:(p + 1)) for (j in 1:p) {beta[k, j] = beta[k, j] / scale[j]}
+  return(list(beta = beta, lambda = lambda))
+}
+```
+
+### Example 38
+```{r}
+df = read.table("crime.txt"); X = as.matrix(df[, 3:7]); y = df[, 1]
+res = lars(X, y)
+beta = res$beta; lambda = res$lambda
+p = ncol(beta)
+plot(0:8000, ylim = c(-7.5, 15), type = "n",
+     xlab = "lambda", ylab = "beta", main = "LARS（USA Crime Data）")
+abline(h = 0)
+for (j in 1:p) lines(lambda[1:(p)], beta[1:(p), j], col = j)
+legend("topright",
+       legend = c("Annual Police Funding in $/Resident", "25 yrs.+ with 4 yrs. of High School",
+                  "16 to 19 yrs. not in High School ...", 
+                  "18 to 24 yrs. in College",
+                  "25 yrs.+ in College"),
+       col = 1:p, lwd = 2, cex = .8)
+```
+
+## 4.4 Dual and Generalized Lasso
+
+```{r}
+fused.dual = function(y, D) {
+  m = nrow(D)
+  lambda = rep(0, m); s = rep(0, m); alpha = matrix(0, m, m)
+  alpha[1, ] = solve(D %*% t(D)) %*% D %*% y
+  for (j in 1:m) if (abs(alpha[1, j]) > lambda[1]) {
+    lambda[1] = abs(alpha[1, j]) 
+    index = j
+    if (alpha[1, j] > 0) s[j] = 1 else s[j] = -1
+  }
+  for (k in 2:m) {
+    U = solve(D[-index, ] %*% t(as.matrix(D[-index, , drop = FALSE])))
+    V = D[-index, ] %*% t(as.matrix(D[index, , drop = FALSE]))
+    u = U %*% D[-index, ] %*% y 
+    v = U %*% V %*% s[index]
+    t = u / (v + 1)
+    for (j in 1:(m - k + 1)) if (t[j] > lambda[k]) {lambda[k] = t[j]; h = j; r = 1}
+    t = u / (v - 1)
+    for (j in 1:(m - k + 1)) if (t[j] > lambda[k]) {lambda[k] = t[j]; h = j; r = -1}
+    alpha[k, index] = lambda[k] * s[index]
+    alpha[k, -index] = u - lambda[k] * v
+    h = setdiff(1:m, index)[h]
+    if (r == 1) s[h] = 1 else s[h] = -1
+    index = c(index, h)
+  }
+  return(list(alpha = alpha, lambda = lambda))
+}
+```
+
+```{r}
+m = p - 1; D = matrix(0, m, p); for (i in 1:m) {D[i, i] = 1; D[i, i + 1] = -1}
+```
+
+```{r}
+fused.prime = function(y, D) {
+  res = fused.dual(y, D)
+  return(list(beta = t(y - t(D) %*% t(res$alpha)), lambda = res$lambda))
+}
+```
+
+### Example 41
+```{r}
+p = 8; y = sort(rnorm(p)); m = p - 1; s = 2 * rbinom(m, 1, 0.5) - 1
+D = matrix(0, m, p); for (i in 1:m) {D[i, i] = s[i]; D[i, i + 1] = -s[i]}
+par(mfrow = c(1, 2))
+res = fused.dual(y, D); alpha = res$alpha; lambda = res$lambda
+lambda.max = max(lambda); m = nrow(alpha)
+alpha.min = min(alpha); alpha.max = max(alpha)
+plot(0:lambda.max, xlim = c(0, lambda.max), ylim = c(alpha.min, alpha.max), type = "n", 
+     xlab = "lambda", ylab = "alpha", main = "Dual Problem")
+u = c(0, lambda); v = rbind(0, alpha); for (j in 1:m) lines(u, v[, j], col = j)
+res = fused.prime(y, D); beta = res$beta 
+beta.min = min(beta); beta.max = max(beta)
+plot(0:lambda.max, xlim = c(0, lambda.max), ylim = c(beta.min, beta.max), type = "n",
+     xlab = "lambda", ylab = "beta", main = "Prime Problem")
+w = rbind(0, beta); for (j in 1:p) lines(u, w[, j], col = j)
+par(mfrow = c(1, 1))
+```
+
+```{r}
+fused.dual.general = function(X, y, D) {
+  X.plus = solve(t(X) %*% X) %*% t(X)
+  D.tilde = D %*% X.plus
+  y.tilde = X %*% X.plus %*% y
+  return(fused.dual(y.tilde, D.tilde))
+}
+fused.prime.general = function(X, y, D) {
+  X.plus = solve(t(X) %*% X) %*% t(X)
+  D.tilde = D %*% X.plus
+  y.tilde = X %*% X.plus %*% y
+  res = fused.dual.general(X, y, D)
+  m = nrow(D)
+  beta = matrix(0, m, p)
+  for (k in 1:m) beta[k, ] = X.plus %*% (y.tilde - t(D.tilde) %*% res$alpha[k, ])
+  return(list(beta = beta, lambda = res$lambda))
+}
+```
+
+### Example 42
+```{r}
+n = 20; p = 10; beta = rnorm(p + 1)
+X = matrix(rnorm(n * p), n, p); y = cbind(1, X) %*% beta + rnorm(n)
+# D = diag(p)  ## Use one of the two D
+D = array(dim = c(p - 1, p))
+for (i in 1:(p - 1)) {D[i, ] = 0; D[i, i] = 1; D[i, i + 1] = -1}
+par(mfrow = c(1, 2))
+res = fused.dual.general(X, y, D); alpha = res$alpha; lambda = res$lambda
+lambda.max = max(lambda); m = nrow(alpha)
+alpha.min = min(alpha); alpha.max = max(alpha)
+plot(0:lambda.max, xlim = c(0, lambda.max), ylim = c(alpha.min, alpha.max), type = "n",
+     xlab = "lambda", ylab = "alpha", main = "Dual Problem")
+u = c(0, lambda); v = rbind(0, alpha); for (j in 1:m) lines(u, v[, j], col = j)
+res = fused.prime.general(X, y, D); beta = res$beta
+beta.min = min(beta); beta.max = max(beta)
+plot(0:lambda.max, xlim = c(0, lambda.max), ylim = c(beta.min, beta.max), type = "n",
+     xlab = "lambda", ylab = "beta", main = "Primary Problem")
+w = rbind(0, beta); for (j in 1:p) lines(u, w[, j], col = j)
+par(mfrow = c(1, 1))
+```
+
+## 4.5 ADMM
+
+```{r}
+admm = function(y, D, lambda) {
+  K = ncol(D); L = nrow(D) 
+  theta.old = rnorm(K); theta = rnorm(K); gamma = rnorm(L); mu = rnorm(L)
+  rho = 1
+  while (max(abs(theta - theta.old) / theta.old) > 0.001) {
+    theta.old = theta
+    theta = solve(diag(K) + rho * t(D) %*% D) %*% (y + t(D) %*% (rho * gamma - mu))
+    gamma = soft.th(lambda, rho * D %*% theta + mu) / rho
+    mu = mu + rho * (D %*% theta - gamma)
+  }
+  return(theta)
+}
+```
+
+### Example 44
+```{r}
+df = read.table("cgh.txt"); y = df[[1]][101:110]; N = length(y)
+D = array(dim = c(N - 1, N)); for (i in 1:(N - 1)) {D[i, ] = 0; D[i, i] = 1; D[i, i + 1] = -1}
+lambda.seq = seq(0, 0.5, 0.01); M = length(lambda.seq)
+theta = list(); for (k in 1:M) theta[[k]] = admm(y, D, lambda.seq[k])
+x.min = min(lambda.seq); x.max = max(lambda.seq) 
+y.min = min(theta[[1]]); y.max = max(theta[[1]])
+plot(lambda.seq, xlim = c(x.min, x.max), ylim = c(y.min, y.max), type = "n", 
+     xlab = "lambda", ylab = "Coefficients", main = "Fused Lasso Solution Path")
+for (k in 1:N) {
+  value = NULL; for (j in 1:M) value = c(value, theta[[j]][k])
+  lines(lambda.seq, value, col = k)
+}
+```

@@ -1,0 +1,308 @@
+# Chapter 3 Group Lasso
+
+***************
+#### From Chapter 1
+```{r}
+centralize <- function(X, y, standardize = TRUE) {
+  X = as.matrix(X)
+  n = nrow(X)
+  p = ncol(X)
+  X.bar = array(dim = p)          ## average of each column in X
+  X.sd = array(dim = p)           ## sd of each colum in X
+  for (j in 1:p) {
+    X.bar[j] = mean(X[, j])
+    X[, j] = (X[, j] - X.bar[j])  ## centralization of each column in X
+    X.sd[j] = sqrt(var(X[, j]))
+    if (standardize == TRUE) 
+      X[, j] = X[, j] / X.sd[j]   ## standarization of each column in X
+  }
+  if (is.matrix(y)) {      ## if y is a matrix
+    K = ncol(y)
+    y.bar = array(dim = K)        ## average of y
+    for (k in 1:K) {
+      y.bar[k] = mean(y[, k])
+      y[, k] = y[, k] - y.bar[k]  ## centralization of y
+    }
+  } else {                         ## if y is a vectory
+    y.bar = mean(y)
+    y = y - y.bar
+  }
+  return(list(X = X, y = y, X.bar = X.bar, X.sd = X.sd, y.bar = y.bar))
+}
+```
+
+***************
+
+## 3.1 When One Group exists
+
+```{r}
+gr = function(X, y, lambda) {
+  nu = 1 / max(eigen(t(X) %*% X)$values)
+  p = ncol(X)
+  beta = rep(1, p); beta.old = rep(0, p)
+  while (max(abs(beta - beta.old)) > 0.001) {
+    beta.old = beta
+    gamma = beta + nu * t(X) %*% (y - X %*% beta)
+    beta = max(1 - lambda * nu / norm(gamma, "2"), 0) * gamma
+  }
+  return(beta)
+}
+```
+
+### Example 27
+```{r}
+## Data Generation
+n = 100
+p = 3
+X = matrix(rnorm(n * p), ncol = p); beta = rnorm(p); epsilon = rnorm(n)
+y = 0.1 * X %*% beta + epsilon
+## Display the Change of Coefficients
+lambda = seq(1, 50, 0.5)
+m = length(lambda)
+beta = matrix(nrow = m, ncol = p)
+for (i in 1:m) {
+  est = gr(X, y, lambda[i]) 
+  for (j in 1:p) beta[i, j] = est[j]
+}
+y.max = max(beta); y.min = min(beta)
+plot(lambda[1]:lambda[m], ylim = c(y.min, y.max),
+     xlab = "lambda", ylab = "Coefficients", type = "n")
+for (j in 1:p) lines(lambda, beta[, j], col = j + 1)
+legend("topright", legend = paste("Coefficients", 1:p), lwd = 2, col = 2:(p + 1))
+segments(lambda[1], 0, lambda[m], 0)
+```
+
+## 3.2 Proximal Gradient
+
+```{r}
+fista = function(X, y, lambda) {
+  nu = 1 / max(eigen(t(X) %*% X)$values)
+  p = ncol(X)
+  alpha = 1
+  beta = rep(1, p); beta.old = rep(1, p)
+  gamma = beta
+  while (max(abs(beta - beta.old)) > 0.001) {
+    print(beta)
+    beta.old = beta
+    w = gamma + nu * t(X) %*% (y - X %*% gamma)
+    beta = max(1 - lambda * nu / norm(w, "2"), 0) * w
+    alpha.old = alpha
+    alpha = (1 + sqrt(1 + 4 * alpha ^ 2)) / 2
+    gamma = beta + (alpha.old - 1) / alpha * (beta - beta.old)
+  }
+  return(beta)
+}
+```
+
+## 3.3 Group Lasso
+
+```{r}
+group.lasso = function(z, y, lambda = 0) {
+  J = length(z)
+  theta = list(); for (j in 1:J) theta[[j]] = rep(0, ncol(z[[j]]))
+  for (m in 1:10) {
+    for (j in 1:J) {
+      r = y; for (k in 1:J) {if (k != j) r = r - z[[k]] %*% theta[[k]]}
+      theta[[j]] = gr(z[[j]], r, lambda)  # fista(X, r, lambda) is ok
+    }
+  }
+  return(theta)
+}
+```
+
+### Example 29
+```{r}
+## Data Generation
+N = 100; J = 2
+u = rnorm(n); v = u + rnorm(n)
+s = 0.1 * rnorm(n); t = 0.1 * s + rnorm(n); y = u + v + s + t + rnorm(n)
+z = list(); z[[1]] = cbind(u, v); z[[2]] = cbind(s, t)  
+## Display the coefficients that change with lambda
+lambda = seq(1, 500, 10); m = length(lambda); beta = matrix(nrow = m, ncol = 4)
+for (i in 1:m) {
+  est = group.lasso(z, y, lambda[i])
+  beta[i, ] = c(est[[1]][1], est[[1]][2], est[[2]][1], est[[2]][2])
+}
+y.max = max(beta); y.min = min(beta)
+plot(lambda[1]:lambda[m], ylim = c(y.min, y.max),
+     xlab = "lambda", ylab = "Coefficients", type = "n")
+lines(lambda, beta[, 1], lty = 1, col = 2); lines(lambda, beta[, 2], lty = 2, col = 2)
+lines(lambda, beta[, 3], lty = 1, col = 4); lines(lambda, beta[, 4], lty = 2, col = 4)
+legend("topright", legend = c("Group1", "Group1", "Group2", "Group2"),
+       lwd = 1, lty = c(1, 2), col = c(2, 2, 4, 4))
+segments(lambda[1], 0, lambda[m], 0)
+```
+
+## 3.4 Sparse Group Lasso
+
+```{r}
+sparse.group.lasso = function(z, y, lambda = 0, alpha = 0) {
+  J = length(z)
+  theta = list(); for (j in 1:J) theta[[j]] = rep(0, ncol(z[[j]]))
+  for (m in 1:10) {
+    for (j in 1:J) {
+      r = y; for (k in 1:J) {if (k != j) r = r - z[[k]] %*% theta[[k]]}
+      theta[[j]] = sparse.gr(z[[j]], r, lambda, alpha)                        ## 
+    }
+  }
+  return(theta)
+}
+
+sparse.gr = function(X, y, lambda, alpha = 0) {
+  nu = 1 / max(2 * eigen(t(X) %*% X)$values)
+  p = ncol(X)
+  beta = rnorm(p); beta.old = rnorm(p)
+  while (max(abs(beta - beta.old)) > 0.001) {
+    beta.old = beta
+    gamma = beta + nu * t(X) %*% (y - X %*% beta)
+    delta = soft.th(lambda * alpha, gamma)                                    ##
+    beta = max(1 - lambda * nu * (1 - alpha) / norm(delta, "2"), 0) * delta   ##
+  }
+  return(beta)
+}
+```
+
+## 3.5 Overlap Group Lasso
+
+## 3.6 Group Lasso with more than one responses
+
+```{r}
+gr.multi.linear.lasso <- function(X, Y, lambda) {
+  n <- nrow(X)
+  p <- ncol(X)
+  K <- ncol(Y) 
+  
+  ## centralize： the function centralize was defined in Chapter 1
+  res <- centralize(X, Y)
+  X <- res$X
+  Y <- res$y
+  
+  ## computing the coefficients
+  beta <- matrix(rnorm(p * K), p, K)
+  gamma <- matrix(0, p, K)
+  while (norm(beta - gamma, "F") / norm(beta, "F") > 10 ^ (-2)) {
+    gamma <- beta        ## Store the beta value for comparison
+    R <- Y - X %*% beta
+    for (j in 1:p) {
+      r <- R + as.matrix(X[, j]) %*% t(beta[j, ])
+      M <- t(X[, j]) %*% r
+      beta[j, ] <- sum(X[, j] ^ 2) ^ (-1) * max(1 - lambda / sqrt(sum(M ^ 2)), 0) * M
+      R <- r - as.matrix(X[, j]) %*% t(beta[j, ])
+    }
+  }
+  
+  ## Computing the intercept
+  for (j in 1:p)
+    beta[j, ] <- beta[j, ] / res$X.sd[j]
+  beta.0 <- res$y.bar - as.vector(res$X.bar %*% beta)
+  return(rbind(beta.0, beta))
+}
+```
+
+### Example 32
+df = read.csv("giants_2019.csv")
+X = as.matrix(df[, -c(2, 3)])
+Y = as.matrix(df[, c(2, 3)])
+lambda.min = 0; lambda.max = 200
+lambda.seq = seq(lambda.min, lambda.max, 5)
+m = length(lambda.seq)
+beta.1 = matrix(0, m, 7); beta.2 = matrix(0, m, 7)
+j = 0
+for (lambda in lambda.seq) {
+  j = j + 1
+  beta = gr.multi.linear.lasso(X, Y, lambda)
+  for (k in 1:7) {
+    beta.1[j, k] = beta[k + 1, 1]; beta.2[j, k] = beta[k + 1, 2]
+  }
+}
+beta.max = max(beta.1, beta.2); beta.min = min(beta.1, beta.2)
+plot(0, xlim = c(lambda.min, lambda.max), ylim = c(beta.min, beta.max),
+     xlab = "lambda", ylab = "Coefficients", main = "Hitters with many HR and RBI")
+for (k in 1:7) {
+  lines(lambda.seq, beta.1[, k], lty = 1, col = k + 1)
+  lines(lambda.seq, beta.2[, k], lty = 2, col = k + 1)
+}
+legend("bottomright", c("H", "SB", "BB", "SH", "SO", "HBP", "DP"),
+       lty = 2, col = 2:8)
+```
+
+## 3.7 Group Lasso for Logistic Regression
+
+```{r}
+gr.multi.lasso = function(X, y, lambda) {
+  n = nrow(X); p = ncol(X); K = length(table(y))
+  beta = matrix(1, p, K)
+  gamma = matrix(0, p, K)
+  Y = matrix(0, n, K); for (i in 1:n) Y[i, y[i]] = 1
+  while (norm(beta - gamma, "F") > 10 ^ (-4)) {
+    gamma = beta
+    eta = X %*% beta
+    P = exp(eta); for (i in 1:n) P[i, ] = P[i, ] / sum(P[i, ])
+    t = 2 * max(P * (1 - P))
+    R = (Y - P) / t
+    for (j in 1:p) {
+      r = R + as.matrix(X[, j]) %*% t(beta[j, ])
+      M = t(X[, j]) %*% r
+      beta[j, ] = sum(X[, j] ^ 2) ^ (-1) * max(1 - lambda / t / sqrt(sum(M ^ 2)), 0) * M
+      R = r - as.matrix(X[, j]) %*% t(beta[j, ])
+    }
+  }
+  return(beta)
+}
+```
+
+### Example 33
+```{r}
+df = iris
+X = cbind(df[[1]], df[[2]], df[[3]], df[[4]])
+y = c(rep(1, 50), rep(2, 50), rep(3, 50))
+lambda.seq = c(10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 125, 150)
+m = length(lambda.seq); p = ncol(X); K = length(table(y))
+alpha = array(dim = c(m, p, K))
+for (i in 1:m) {
+  res = gr.multi.lasso(X, y, lambda.seq[i])
+  for (j in 1:p) {for (k in 1:K) alpha[i, j, k] = res[j, k]}
+}
+plot(0, xlim = c(0, 150), ylim = c(min(alpha), max(alpha)), type = "n",
+     xlab = "lambda", ylab = "Coefficients", main = "Each lambda and its Coefficients")
+for (j in 1:p) {for (k in 1:K) lines(lambda.seq, alpha[, j, k], col = j + 1)}
+legend("topright", legend = c("Sepal Length", "Sepal Width", "Petal Length", "Petal Width"),
+       lwd = 2, col = 2:5)
+```
+
+## 3.8 Group Lasso for Generalized Additive Models
+
+### Example 34
+```{r}
+## Data Generation
+n = 100; J = 2; x = rnorm(n); y = x + cos(x)
+z[[1]] = cbind(rep(1, n), x)
+z[[2]] = cbind(cos(x), cos(2 * x), cos(3 * x))
+## Display the Change of the Coefficients
+lambda = seq(1, 200, 5); m = length(lambda); beta = matrix(nrow = m, ncol = 5)
+for (i in 1:m) {
+  est = group.lasso(z, y, lambda[i])
+  beta[i, ] = c(est[[1]][1], est[[1]][2], est[[2]][1], est[[2]][2], est[[2]][3])
+}
+y.max = max(beta); y.min = min(beta)
+plot(lambda[1]:lambda[m], ylim = c(y.min, y.max),
+     xlab = "lambda", ylab = "Coefficients", type = "n")
+lines(lambda, beta[, 1], lty = 1, col = 2); lines(lambda, beta[, 2], lty = 2, col = 2)
+lines(lambda, beta[, 3], lty = 1, col = 4); lines(lambda, beta[, 4], lty = 2, col = 4)
+lines(lambda, beta[, 5], lty = 3, col = 4)
+legend("topright", legend = c("1", "x", "cos x", "cos 2x", "cos 3x"),
+       lwd = 1, lty = c(1, 2, 1, 2, 3), col = c(2, 2, 4, 4, 4))
+segments(lambda[1], 0, lambda[m], 0)
+
+i = 5　 # lambda[5] is used
+f.1 = function(x) beta[i, 1] + beta[i, 2] * x
+f.2 = function(x) beta[i, 3] * cos(x) + beta[i, 4] * cos(2 * x) + beta[i, 5] * cos(3 * x)
+f = function(x) f.1(x) + f.2(x)
+curve(f.1(x), -5, 5, col = "red", ylab = "Function Value")
+curve(f.2(x), -5, 5, col = "blue", add = TRUE)
+curve(f(x), -5, 5, add = TRUE)
+legend("topleft", legend = c("f = f.1 + f.2", "f.1", "f.2"),
+       col = c(1, "red", "blue"), lwd = 1)
+
+```
+
