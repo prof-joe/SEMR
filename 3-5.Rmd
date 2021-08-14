@@ -1,0 +1,243 @@
+# Chapter 5 Graphical Model
+
+## 5.1 Graphical Model
+
+## 5.2 Graphical Lasso
+
+```{r}
+inner.prod = function(x, y) {
+  return(sum(x * y))
+} ## already appeared
+
+soft.th = function(lambda, x) {
+  return(sign(x) * pmax(abs(x) - lambda, 0))
+} ## already appeared
+
+graph.lasso = function(s, lambda = 0) {
+  W = s; p = ncol(s); beta = matrix(0, nrow = p - 1, ncol = p)
+  beta.out = beta; eps.out = 1
+  while (eps.out > 0.01) {
+    for (j in 1:p) {
+      a = W[-j, -j]; b = s[-j, j]
+      beta.in = beta[, j]; eps.in = 1
+      while (eps.in > 0.01) {
+        for (h in 1:(p - 1)) {
+          cc = b[h] - inner.prod(a[h, -h], beta[-h, j])
+          beta[h, j] = soft.th(lambda, cc) / a[h, h]         
+        }
+        eps.in = max(beta[, j] - beta.in); beta.in = beta[, j]
+      }
+      W[-j, j] = W[-j, -j] %*% beta[, j]     
+    }
+    eps.out = max(beta - beta.out); beta.out = beta
+  }
+  theta = matrix(nrow = p, ncol = p)
+  for (j in 1:p) {
+    theta[j, j] = 1 / (W[j, j] - W[j, -j] %*% beta[, j]) 
+    theta[-j, j] = -beta[, j] * theta[j, j]       
+  }
+  return(theta)
+}
+```
+
+### Example 47
+```{r}
+library(MultiRNG)
+Theta = matrix(c(   2,  0.6,    0,    0,  0.5,  0.6,    2, -0.4,  0.3,    0,    0, -0.4,    2,
+                 -0.2,    0,    0,  0.3, -0.2,    2, -0.2,  0.5,    0,    0, -0.2,    2),
+               nrow = 5)
+Sigma = solve(Theta)
+meanvec = rep(0, 5)
+dat = draw.d.variate.normal(no.row = 20, d = 5, mean.vec = meanvec, cov.mat = Sigma)　
+# average: mean.vec, cov matric: cov.mat, sample #: no.row, variable #: d
+s = t(dat) %*% dat / nrow(dat)
+s <- t(dat) %*% dat / nrow(dat)
+
+Theta
+graph.lasso(s)
+graph.lasso(s, lambda = 0.015)
+graph.lasso(s, lambda = 0.03)
+graph.lasso(s, lambda = 0.05)
+```
+
+### Example 48
+```{r}
+library(glasso)
+solve(s)
+glasso(s, rho = 0)
+glasso(s, rho = 0.015)
+glasso(s, rho = 0.030)
+glasso(s, rho = 0.045)
+```
+
+```{r}
+library(igraph)
+adj = function(mat) {
+  p = ncol(mat); ad = matrix(0, nrow = p, ncol = p)
+  for (i in 1:(p - 1)) for (j in (i + 1):p) {
+    if (mat[i, j] == 0) ad[i, j] = 0 else ad[i, j] = 1
+  }
+  g = graph.adjacency(ad, mode = "undirected")
+  plot(g)
+}
+```
+
+### Example 49
+```{r}
+library(glasso); library(igraph)
+df = read.csv("breastcancer.csv")
+w = matrix(nrow = 250, ncol = 1000)
+for (i in 1:1000) w[, i] = as.numeric(df[[i]])
+x = w; s = t(x) %*% x / 250
+fit = glasso(s, rho = 0.75); sum(fit$wi == 0) 
+y = NULL; z = NULL 
+for (i in 1:999) for (j in (i + 1):1000) if (fit$wi[i, j] != 0) {y = c(y, i); z = c(z, j)}
+edges = cbind(y, z)  
+write.csv(edges,"edges.csv")
+```
+
+## 5.3 Estimation of Graphical Models using the Quasi-Likelihood
+
+### Example 50
+```{r}
+library(glmnet)
+df = read.csv("breastcancer.csv")
+n = 250; p = 50; w = matrix(nrow = n, ncol = p)
+for (i in 1:p) w[, i] = as.numeric(df[[i]])
+x = w[, 1:p]; fm = rep("gaussian", p); lambda = 0.1
+fit = list()
+for (j in 1:p) fit[[j]] = glmnet(x[, -j], x[, j], family = fm[j], lambda = lambda)
+ad = matrix(0, p, p)
+for (i in 1:p) for (j in 1:(p - 1)) {
+  k = j
+  if (j >= i) k = j + 1
+  if (fit[[i]]$beta[j] != 0) ad[i, k] = 1 else ad[i, k] = 0
+}
+## AND
+for (i in 1:(p - 1)) for (j in (i + 1):p) {
+  if (ad[i, j] != ad[i, j]) {ad[i, j] = 0; ad[j, i] = 0}
+}
+u = NULL; v = NULL
+for (i in 1:(p - 1)) for (j in (i + 1):p) {
+  if (ad[i, j] == 1) {u = c(u, i); v = c(v, j)}
+}
+u
+v
+
+adj(ad)
+## OR
+for (i in 1:(p - 1)) for (j in (i + 1):p) {
+  if (ad[i, j] != ad[i, j]) {ad[i, j] = 1; ad[j, i] = 1}
+}
+adj(ad)
+```
+
+### Example 51
+```{r}
+library(glmnet)
+df = read.csv("breastcancer.csv")
+w = matrix(nrow = 250, ncol = 1000); for (i in 1:1000) w[, i] = as.numeric(df[[i]])
+w = (sign(w) + 1) / 2  ## transforming it to binary
+p = 50; x = w[, 1:p]; fm = rep("binomial", p); lambda = 0.15
+fit = list()
+for (j in 1:p) fit[[j]] = glmnet(x[, -j], x[, j], family = fm[j], lambda = lambda)
+ad = matrix(0, nrow = p, ncol = p)
+for (i in 1:p) for (j in 1:(p - 1)) {
+  k = j
+  if (j >= i) k = j + 1
+  if (fit[[i]]$beta[j] != 0) ad[i, k] = 1 else ad[i, k] = 0
+}
+for (i in 1:(p - 1)) for (j in (i + 1):p) {
+  if (ad[i, j] != ad[i, j]) {ad[i, j] = 0; ad[j, i] = 0}
+}
+sum(ad); adj(ad)
+```
+
+## 5.4 JointグラフィカルLasso
+
+```{r}
+# genlasso works only when the size is at least three
+b.fused = function(y, lambda) {
+  if (y[1] > y[2] + 2 * lambda) {a = y[1] - lambda; b = y[2] + lambda} 
+  else if (y[1] < y[2] - 2 * lambda) {a = y[1] + lambda; b = y[2] - lambda}
+  else {a = (y[1] + y[2]) / 2; b = a}
+  return(c(a, b))
+}
+# fused Lasso that compares not only the adjacency terms but also all adjacency values
+fused = function(y, lambda.1, lambda.2) {
+  K = length(y)
+  if (K == 1) theta = y
+  else if (K == 2) theta = b.fused(y, lambda.2)
+  else {
+    L = K * (K - 1) / 2; D = matrix(0, nrow = L, ncol = K)
+    k = 0
+    for (i in 1:(K - 1)) for (j in (i + 1):K) {
+      k = k + 1; D[k, i] = 1; D[k, j] = -1
+    }
+    out = genlasso(y, D = D)
+    theta = coef(out, lambda = lambda.2)               
+  }
+  theta = soft.th(lambda.1, theta)            
+  return(theta)
+}
+# Joint Graphical Lasso
+jgl = function(X, lambda.1, lambda.2) {  # X is given as a list
+  K = length(X); p = ncol(X[[1]]); n = array(dim = K); S = list()
+  for (k in 1:K) {n[k] = nrow(X[[k]]); S[[k]] = t(X[[k]]) %*% X[[k]] / n[k]}
+  rho = 1; lambda.1 = lambda.1 / rho; lambda.2 = lambda.2 / rho
+  Theta = list(); for (k in 1:K) Theta[[k]] = diag(p)
+  Theta.old = list(); for (k in 1:K) Theta.old[[k]] = diag(rnorm(p))
+  U = list(); for (k in 1:K) U[[k]] = matrix(0, nrow = p, ncol = p)
+  Z = list(); for (k in 1:K) Z[[k]] = matrix(0, nrow = p, ncol = p)
+  epsilon = 0; epsilon.old = 1
+  while (abs((epsilon - epsilon.old) / epsilon.old) > 0.0001) {
+    Theta.old = Theta;  epsilon.old = epsilon
+    ## Update (i)
+    for (k in 1:K) {
+      mat = S[[k]] - rho * Z[[k]] / n[k] + rho * U[[k]] / n[k]
+      svd.mat = svd(mat)
+      V = svd.mat$v
+      D = svd.mat$d
+      DD = n[k] / (2 * rho) * (-D + sqrt(D ^ 2 + 4 * rho / n[k]))
+      Theta[[k]] = V %*% diag(DD) %*% t(V)
+    }
+    ## Update (ii)
+    for (i in 1:p) for (j in 1:p) {
+      A = NULL; for (k in 1:K) A = c(A, Theta[[k]][i, j] + U[[k]][i, j])
+      if (i == j) B = fused(A, 0, lambda.2) else B = fused(A, lambda.1, lambda.2)
+      for (k in 1:K) Z[[k]][i, j] = B[k]
+    }
+    ## Update (iii)
+    for (k in 1:K) U[[k]] = U[[k]] + Theta[[k]] - Z[[k]]     
+    ## Test Convergence
+    epsilon = 0
+    for (k in 1:K) {
+      epsilon.new = max(abs(Theta[[k]] - Theta.old[[k]]))
+      if (epsilon.new > epsilon) epsilon = epsilon.new
+    }
+  }
+  return(Z)
+}
+```
+
+```{r, eval = FALSE}
+## Replace the update (ii) by the following
+for (i in 1:p) for (j in 1:p) {
+  A = NULL; for (k in 1:K) A = c(A, Theta[[k]][i, j] + U[[k]][i, j])
+  if (i == j) B = A
+  else {B = soft.th(lambda.1 / rho,A) *
+    max(1 - lambda.2 / rho / sqrt(norm(soft.th(lambda.1 / rho, A), "2") ^ 2), 0)}
+  for (k in 1:K) Z[[k]][i, j] = B[k]
+}
+```
+
+### Example 52
+```{r}
+## Data Generation and Execution
+p = 10; K = 2; N = 100; n = array(dim = K); for (k in 1:K) n[k] = N / K
+X = list(); X[[1]] = matrix(rnorm(n[k] * p), ncol = p)
+for (k in 2:K) X[[k]] = X[[k - 1]] + matrix(rnorm(n[k] * p) * 0.1, ncol = p)
+## Change the lambda.1,lambda.2 values to execute
+Theta = jgl(X, 3, 0.01)
+par(mfrow = c(1, 2)); adj(Theta[[1]]); adj(Theta[[2]])
+```

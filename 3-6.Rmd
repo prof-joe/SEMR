@@ -1,0 +1,111 @@
+# Chapter 5 Matrix Decomposition
+
+## 6.1 Sungular Decomposition
+
+### Example 53
+```{r}
+Z = matrix(c(0, 5, -1, -2, -4, 1), nrow = 3)
+Z
+svd(Z)
+svd(t(Z))
+```
+
+### Example 54
+```{r}
+Z = matrix(c(0, 5, 5, -1), nrow = 2)
+Z
+svd(Z)
+eigen(Z)
+```
+
+## 6.2 Eckart-Young's Theorem
+
+```{r}
+svd.r = function(z, r) {
+  n = min(nrow(z), ncol(z))
+  ss = svd(z)
+  tt = ss$u %*% diag(c(ss$d[1:r], rep(0, n - r))) %*% t(ss$v)
+  return(tt)
+}
+```
+
+### Example 55
+```{r}
+m = 200; n = 150; z = matrix(rnorm(m * n), nrow = m)
+F.norm = NULL; for (r in 1:n) {m = svd.r(z, r); F.norm = c(F.norm, norm(z - m, "F") ^ 2)}
+plot(1:n, F.norm, type = "l", xlab = "Rank", ylab = "Squared Frobenius Norm")
+```
+
+### Example 56
+```{r}
+library(jpeg)
+image = readJPEG('lion.jpg')
+rank.seq = c(2, 5, 10, 20, 50, 100)
+mat = array(0, dim = c(nrow(image), ncol(image), 3))
+for (j in rank.seq) {
+  for (i in 1:3) mat[, , i] = svd.r(image[, , i], j)
+  writeJPEG(mat, paste("compressed/lion_compressed", "_mat_rank_", j, ".jpg", sep = ""))
+}
+```
+
+```{r}
+mat.r = function(z, mask, r) {
+  z = as.matrix(z)
+  min = Inf
+  m = nrow(z); n = ncol(z)
+  for (j in 1:5) {
+    guess = matrix(rnorm(m * n), nrow = m)
+    for (i in 1:10) guess = svd.r(mask * z + (1 - mask) * guess, r)
+    value = norm(mask * (z - guess), "F")
+    if (value < min) {min.mat = guess; min = value}
+  }
+  return(min.mat)
+}
+```
+
+### Example 57
+```{r}
+library(jpeg)
+image = readJPEG('lion.jpg')
+m = nrow(image); n = ncol(image)
+mask = matrix(rbinom(m * n, 1, 0.5), nrow = m)
+rank.seq = c(2, 5, 10, 20, 50, 100)
+mat = array(0, dim = c(nrow(image), ncol(image), 3))
+for (j in rank.seq) {
+  for (i in 1:3) mat[, , i] = mat.r(image[, , i], mask, j)
+  writeJPEG(mat, paste("compressed/lion_compressed", "_mat_rank_", j, ".jpg", sep = ""))
+}
+```
+
+## 6.3 Norm
+
+## 6.4 Application of Sparse to Low Rank Approximation
+
+```{r}
+soft.svd = function(lambda, z) {
+  n = ncol(z); ss = svd(z); dd = pmax(ss$d - lambda, 0)
+  return(ss$u %*% diag(dd) %*% t(ss$v))
+}
+```
+
+```{r}
+mat.lasso = function(lambda, z, mask) {
+  z = as.matrix(z); m = nrow(z); n = ncol(z)
+  guess = matrix(rnorm(m * n), nrow = m)
+  for (i in 1:20) guess = soft.svd(lambda, mask * z + (1 - mask) * guess)
+  return(guess)
+}
+```
+
+### Example 59
+```{r}
+library(jpeg)
+image = readJPEG('lion.jpg')
+m = nrow(image[, , 1]); n = ncol(image[, , 1])
+p = 0.5
+lambda = 0.5
+mat = array(0, dim = c(m, n, 3))
+mask = matrix(rbinom(m * n, 1, p), ncol = n)
+for (i in 1:3) mat[, , i] = mat.lasso(lambda, image[, , i], mask)
+writeJPEG(mat, paste("compressed/lion_compressed", "_mat_soft.jpg", sep = ""))
+```

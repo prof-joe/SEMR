@@ -1,0 +1,315 @@
+# Chapter 7 Multivariable Analysis
+
+***************
+#### From Chapter 3
+```{r}
+gr = function(X, y, lambda) {
+  nu = 1 / max(eigen(t(X) %*% X)$values)
+  p = ncol(X)
+  beta = rep(1, p)
+  
+  beta.old = rep(0, p)
+  while (max(abs(beta - beta.old)) > 0.001) {
+    beta.old = beta
+    gamma = beta + nu * t(X) %*% (y - X %*% beta)
+    beta = max(1 - lambda * nu / norm(gamma, "2"), 0) * gamma
+  }
+  return(beta)
+}
+```
+***************
+
+## 7.1 PCA (1)：SCoTLASS
+
+```{r}
+soft.th = function(lambda, z) return(sign(z) * pmax(abs(z) - lambda, 0))
+## even if z is a vector, soft.th works
+SCoTLASS = function(lambda, X) {
+  n = nrow(X); p = ncol(X); v = rnorm(p); v = v / norm(v, "2")
+  for (k in 1:200) {
+    u = X %*% v; u = u / norm(u, "2"); v = t(X) %*% u
+    v = soft.th(lambda, v); size = norm(v, "2")
+    if (size > 0) v = v / size else break
+  }
+  if (norm(v, "2") == 0) print("all the elements of v are zero"); return(v)
+}
+```
+
+### Example 61
+```{r}
+## Data Generation
+n = 100; p = 50; X = matrix(rnorm(n * p), nrow = n); lambda.seq = 0:10 / 10
+m = 5; SS = array(dim = c(m, 11)); TT = array(dim = c(m, 11))
+for (j in 1:m) {
+  S = NULL; T = NULL
+  for (lambda in lambda.seq) {
+    v = SCoTLASS(lambda, X); S = c(S, sum(sign(v ^ 2))); T = c(T, norm(X %*% v, "2"))
+  }
+  SS[j, ] = S; TT[j, ] = T
+}
+## Display
+par(mfrow = c(1, 2))
+SS.min = min(SS); SS.max = max(SS)
+plot(lambda.seq, xlim = c(0, 1), ylim = c(SS.min, SS.max),
+     xlab = "lambda", ylab = "# of nonzero vectors")
+for (j in 1:m) lines(lambda.seq, SS[j, ], col = j + 1)
+legend("bottomleft", paste0(1:5, "-th"), lwd = 1, col = 2:(m + 1))
+TT.min = min(TT); TT.max = max(TT) 
+plot(lambda.seq, xlim = c(0, 1), ylim = c(TT.min, TT.max), xlab = "lambda", ylab = "Variance Sum")
+for (j in 1:m) lines(lambda.seq, TT[j, ], col = j + 1)
+legend("bottomleft", paste0(1:5, "-th"), lwd = 1, col = 2:(m + 1))
+par(mfrow = c(1, 1))
+```
+
+## 7.2 PCA(2)：SPCA
+
+### Example 62
+```{r}
+## Data Generation
+n = 100; p = 5; x = matrix(rnorm(n * p), ncol = p)
+## Computation of u,v
+lambda = 0.001; m = 100 
+g = array(dim = c(m, p))
+for (j in 1:p) x[, j] = x[, j] - mean(x[, j])
+for (j in 1:p) x[, j] = x[, j] / sqrt(sum(x[, j] ^ 2))
+r = rep(0, n)
+v = rnorm(p)
+for (h in 1:m) {
+  z = x %*% v
+  u = as.vector(t(x) %*% z)
+  if (sum(u ^ 2) > 0.00001) u = u / sqrt(sum(u ^ 2))
+  for (k in 1:p) {
+    for (i in 1:n) r[i] = sum(u * x[i, ]) - sum(u ^ 2) * sum(x[i, -k] * v[-k])
+    S = sum(x[, k] * r) / n
+    v[k] = soft.th(lambda, S)
+  }
+  if (sum(v ^ 2) > 0.00001) v = v / sqrt(sum(v ^ 2))
+  g[h, ] = v
+}
+## Graph Display
+g.max = max(g); g.min = min(g)
+plot(1:m, ylim = c(g.min, g.max), type = "n", 
+     xlab = "# Repetition", ylab = "Each element of v", main = "lambda = 0.001")
+for (j in 1:p) lines(1:m, g[, j], col = j + 1)
+```
+
+## 7.3 K-means Clustering
+
+```{r}
+k.means = function(X, K, weights = w) {
+  n = nrow(X); p = ncol(X)
+  y = sample(1:K, n, replace = TRUE); center = array(dim = c(K, p))
+  for (h in 1:10) {
+    for (k in 1:K) {
+      if (sum(y[] == k) == 0) center[k, ] = Inf else
+        for (j in 1:p) center[k, j] = mean(X[y[] == k, j])
+    }
+    for (i in 1:n) {
+      S.min = Inf
+      for (k in 1:K) {
+        if (center[k, 1] == Inf) break
+        S = sum((X[i, ] - center[k, ]) ^ 2 * w)
+        if (S < S.min) {S.min = S; y[i] = k}
+      }
+    }
+  }
+  return(y)
+}
+```
+
+### Example 63
+```{r}
+## Data Generation
+K = 10; p = 2; n = 1000; X = matrix(rnorm(p * n), nrow = n, ncol = p)
+w = c(1, 1); y = k.means(X, K, w)
+## Display Output
+plot(-3:3, -3:3, xlab = "x", ylab = "y", type = "n")
+points(X[, 1], X[, 2], col = y + 1)
+```
+
+```{r}
+sparse.k.means = function(X, K, s) {
+  p = ncol(X); w = rep(1, p)
+  for (h in 1:10) {
+    y = k.means(X, K, w)
+    a = comp.a(X, y)
+    w = w.a(a, s)
+  }
+  return(list(w = w, y = y))
+}
+
+w.a = function(a, s) {
+  w = rep(1, p)
+  a = a / sqrt(sum(a ^ 2))
+  if (sum(a) < s) return(a)
+  p = length(a)
+  lambda = max(a) / 2
+  delta = lambda / 2
+  for (h in 1:10) {
+    for (j in 1:p) w[j] = soft.th(lambda, a[j])
+    ww = sqrt(sum(w ^ 2))
+    if (ww == 0) w = 0 else w = w / ww
+    if (sum(w) > s) lambda = lambda + delta else lambda = lambda - delta
+    delta = delta / 2
+  }
+  return(w)
+}
+
+comp.a = function(X, y) {
+  n = nrow(X); p = ncol(X); a = array(dim = p)
+  for (j in 1:p) {
+    a[j] = 0
+    for (i in 1:n) for (h in 1:n) a[j] = a[j] + (X[i, j] - X[h, j]) ^ 2 / n
+    for (k in 1:K) {
+      S = 0
+      index = which(y == k)
+      if (length(index) == 0) break
+      for (i in index) for (h in index) S = S + (X[i, j] - X[h, j]) ^ 2
+      a[j] = a[j] - S / length(index)
+    }
+  }
+  return(a)
+}
+```
+
+### Example 64
+```{r}
+p = 10; n = 100; X = matrix(rnorm(p * n), nrow = n, ncol = p)
+sparse.k.means(X, 5, 1.5)
+```
+
+## 7.4 Convex Clustering
+
+```{r}
+## Computing weights
+ww = function(x, mu = 1, dd = 0) {
+  n = nrow(x)
+  w = array(dim = c(n, n))
+  for (i in 1:n) for (j in 1:n) w[i, j] = exp(-mu * sum((x[i, ] - x[j, ]) ^ 2))
+  if (dd > 0) for (i in 1:n) {
+    dis = NULL
+    for (j in 1:n) dis = c(dis, sqrt(sum((x[i, ] - x[j, ]) ^ 2)))
+    index = which(dis > dd)
+    w[i, index] = 0
+  }
+  return(w)
+}
+## prox (group Lasso) for L2
+prox = function(x, tau) {
+  if (sum(x ^ 2) == 0) return(x) else return(max(0, 1 - tau / sqrt(sum(x ^ 2))) * x)
+}
+## Update u
+update.u = function(v, lambda) {
+  u = array(dim = c(n, d))
+  z = 0; for (i in 1:n) z = z + x[i, ]
+  y = x
+  for (i in 1:n) {
+    if (i < n) for (j in (i + 1):n) y[i, ] = y[i, ] + lambda[i, j, ] + nu * v[i, j, ]
+    if (1 < i) for (j in 1:(i - 1)) y[i, ] = y[i, ] - lambda[j, i, ] - nu * v[j, i, ]
+    u[i, ] = (y[i, ] + nu * z) / (n * nu + 1)
+  }
+  return(u)
+}
+## Update v
+update.v = function(u, lambda) {
+  v = array(dim = c(n, n, d))
+  for (i in 1:(n - 1)) for (j in (i + 1):n) {
+    v[i, j, ] = prox(u[i, ] - u[j, ] - lambda[i, j, ] / nu, gamma * w[i, j] / nu)
+  }
+  return(v)
+}
+## Update lambda
+update.lambda = function(u, v, lambda) {
+  for (i in 1:(n - 1)) for (j in (i + 1):n) {
+    lambda[i, j, ] = lambda[i, j, ] + nu * (v[i, j, ] - u[i, ] + u[j, ])
+  }
+  return(lambda)
+}
+## Repeats the updates of u,v,lambda for the max_iter times
+convex.cluster = function() {
+  v = array(rnorm(n * n * d), dim = c(n, n, d))
+  lambda = array(rnorm(n * n * d), dim = c(n, n, d))
+  for (iter in 1:max_iter) {
+    u = update.u(v, lambda); v = update.v(u, lambda); lambda = update.lambda(u, v, lambda)
+  }
+  return(list(u = u, v = v))
+}
+```
+
+### Example 65
+```{r}
+## Data Generation
+n = 50; d = 2; x = matrix(rnorm(n * d), n, d)
+## Convex Clustering
+w = ww(x, 1, dd = 0.5) 
+gamma=1 # gamma = 10 
+nu = 1; max_iter = 1000; v = convex.cluster()$v
+## Adjacency Matrix
+a = array(0, dim = c(n, n))
+for (i in 1:(n - 1)) for (j in (i + 1):n) {
+  if (sqrt(sum(v[i, j, ] ^ 2)) < 1 / 10 ^ 4) {a[i, j] = 1; a[j, i] = 1}
+}
+## Display Figure
+k = 0
+y = rep(0, n)
+for (i in 1:n) {
+  if (y[i] == 0) {
+    k = k + 1
+    y[i] = k
+    if (i < n) for (j in (i + 1):n) if (a[i, j] == 1) y[j] = k
+  }
+}
+plot(0, xlim = c(-3, 3), ylim = c(-3, 3), type = "n", main = "gamma = 10")
+points(x[, 1], x[, 2], col = y + 1)
+```
+
+```{r}
+s.update.u = function(G, G.inv, v, lambda) {
+  u = array(dim = c(n, d))   
+  y = x
+  for (i in 1:n) {
+    if (i < n) for (j in (i + 1):n) y[i, ] = y[i, ] + lambda[i, j, ] + nu * v[i, j, ]
+    if (1 < i) for (j in 1:(i - 1)) y[i, ] = y[i, ] - lambda[j, i, ] - nu * v[j, i, ]
+  }
+  for (j in 1:d) u[, j] = gr(G, G.inv %*% y[, j], gamma.2 * r[j])   　　　　　　　##
+  for (j in 1:d) u[, j] = u[, j] - mean(u[, j])
+  return(u)
+}
+s.convex.cluster = function() {
+  ## Set gamma.2, r[1], ..., r[p] 
+  G = sqrt(1 + n * nu) * diag(n) - (sqrt(1 + n * nu) - 1) / n * matrix(1, n, n) 
+  G.inv = (1 + n * nu) ^ (-0.5) * (diag(n) + (sqrt(1 + n * nu) - 1) / n * matrix(1, n, n))
+  v = array(rnorm(n * n * d), dim = c(n, n, d))
+  lambda = array(rnorm(n * n * d), dim = c(n, n, d))
+  for (iter in 1:max_iter) {
+    u = s.update.u(G, G.inv, v, lambda); v = update.v(u, lambda)
+    lambda = update.lambda(u, v, lambda)
+  }
+  return(list(u = u, v = v))
+}
+```
+
+### Example 66
+```{r}
+## Data Generation
+n = 50; d = 10; x = matrix(rnorm(n * d), n, d)
+## Setting before execution
+w = ww(x, 1/d, dd = sqrt(d))  ## d is large and adjust it
+gamma = 10; nu = 1; max_iter = 1000
+r = rep(1, d)
+## Change gamma.2, and execute it, and display the coefficients
+gamma.2.seq = seq(1, 10, 1)
+m = length(gamma.2.seq)
+z = array(dim = c(m, d))
+h = 0
+for (gamma.2 in gamma.2.seq) {
+  h = h + 1
+  u = s.convex.cluster()$u
+  print(gamma.2)
+  for (j in 1:d) z[h, j] = u[5, j]
+}
+plot(0, xlim = c(1, 10), ylim = c(-2, 2), type = "n",
+     xlab = "gamma.2", ylab = "Coefficients", main = "gamma = 100")
+for (j in 1:d) lines(gamma.2.seq, z[, j], col = j + 1)
+```
+
